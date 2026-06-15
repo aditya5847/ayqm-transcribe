@@ -51,6 +51,18 @@
   ```sh
   /Users/adityasrivastava/.local/bin/uv run python main.py extract test_audio/SonsOfGnadhiLegionnairesDisease.json --yes
   ```
+- Transcribe audio and extract trivia in one command:
+  ```sh
+  /Users/adityasrivastava/.local/bin/uv run python main.py process test_audio/130.mp3
+  ```
+- Transcribe audio, save the transcript, estimate extraction cost, and stop before Gemini generation:
+  ```sh
+  /Users/adityasrivastava/.local/bin/uv run python main.py process test_audio/130.mp3 --estimate-only
+  ```
+- Transcribe audio and extract trivia without the approval prompt after showing the estimate:
+  ```sh
+  /Users/adityasrivastava/.local/bin/uv run python main.py process test_audio/130.mp3 --yes
+  ```
 - Run tests:
   ```sh
   /Users/adityasrivastava/.local/bin/uv run python -m unittest discover -s tests

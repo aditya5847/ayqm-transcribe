@@ -22,6 +22,24 @@ def load_repo_env() -> None:
     load_dotenv(dotenv_path=Path(".env"))
 
 
+def configure_logging() -> None:
+    logging.basicConfig(level=logging.INFO, format="%(asctime)s [%(levelname)s] %(name)s: %(message)s")
+
+
+def write_transcript(output: str, result: dict) -> None:
+    with open(output, "w", encoding="utf-8") as f:
+        json.dump(result, f, cls=WhisperXEncoder, indent=2, ensure_ascii=False)
+
+
+def write_trivia(output: str, result) -> None:
+    with open(output, "w", encoding="utf-8") as output_file:
+        json.dump(result.model_dump(), output_file, indent=2, ensure_ascii=False)
+
+
+def resolve_gemini_model(model: Optional[str]) -> str:
+    return model or os.environ.get("AYQM_GEMINI_MODEL") or DEFAULT_MODEL
+
+
 @app.command()
 def transcribe(
     audio_path: str = typer.Argument(..., help="Path to the audio file to transcribe."),
@@ -81,8 +99,7 @@ def transcribe(
     and optionally executes speaker diarization. Saves output as JSON.
     """
     load_repo_env()
-    # Configure logging
-    logging.basicConfig(level=logging.INFO, format="%(asctime)s [%(levelname)s] %(name)s: %(message)s")
+    configure_logging()
 
     resolved_token = hf_token or os.environ.get("HF_TOKEN")
 
@@ -105,8 +122,7 @@ def transcribe(
         )
 
         typer.echo(f"Writing transcript to {output}...")
-        with open(output, "w", encoding="utf-8") as f:
-            json.dump(result, f, cls=WhisperXEncoder, indent=2, ensure_ascii=False)
+        write_transcript(output, result)
         
         typer.echo("Transcription completed successfully!")
     except Exception as e:
@@ -150,8 +166,8 @@ def extract(
     Extracts structured trivia from a transcript JSON file using Gemini.
     """
     load_repo_env()
-    logging.basicConfig(level=logging.INFO, format="%(asctime)s [%(levelname)s] %(name)s: %(message)s")
-    resolved_model = model or os.environ.get("AYQM_GEMINI_MODEL") or DEFAULT_MODEL
+    configure_logging()
+    resolved_model = resolve_gemini_model(model)
 
     if not output:
         output = str(Path(transcript_path).with_suffix(".trivia.json"))
@@ -180,13 +196,155 @@ def extract(
         )
 
         typer.echo(f"Writing trivia to {output}...")
-        with open(output, "w", encoding="utf-8") as output_file:
-            json.dump(result.model_dump(), output_file, indent=2, ensure_ascii=False)
+        write_trivia(output, result)
         typer.echo(f"Extracted {len(result.trivia)} trivia items.")
     except typer.Exit:
         raise
     except Exception as e:
         typer.echo(f"Error during trivia extraction: {e}", err=True)
+        raise typer.Exit(code=1)
+
+
+@app.command()
+def process(
+    audio_path: str = typer.Argument(..., help="Path to the audio file to transcribe and extract trivia from."),
+    transcript_output: Optional[str] = typer.Option(
+        None,
+        "--transcript-output",
+        help="Path to the intermediate transcript JSON. Defaults to <audio_name>.json.",
+    ),
+    trivia_output: Optional[str] = typer.Option(
+        None,
+        "--trivia-output",
+        help="Path to the final trivia JSON. Defaults to <audio_name>.trivia.json.",
+    ),
+    whisper_model: str = typer.Option(
+        "base",
+        "--whisper-model",
+        help="Whisper model size/name to use (e.g., 'tiny', 'base', 'small', 'medium', 'large-v3').",
+    ),
+    device: str = typer.Option(
+        "cpu",
+        "--device",
+        "-d",
+        help="Hardware device to use for transcription ('cpu', 'cuda', 'mps').",
+    ),
+    compute_type: str = typer.Option(
+        "int8",
+        "--compute-type",
+        "-c",
+        help="Precision type to use for transcription ('float16', 'int8', 'float32').",
+    ),
+    batch_size: int = typer.Option(
+        16,
+        "--batch-size",
+        "-b",
+        help="Batch size for transcription execution.",
+    ),
+    diarize: bool = typer.Option(
+        False,
+        "--diarize",
+        help="Enable speaker diarization. Requires Hugging Face agreement and token.",
+    ),
+    hf_token: Optional[str] = typer.Option(
+        None,
+        "--hf-token",
+        help="Hugging Face User Access Token. Can also be set via HF_TOKEN environment variable.",
+    ),
+    min_speakers: Optional[int] = typer.Option(
+        None,
+        "--min-speakers",
+        help="Hint for minimum number of speakers (used if diarization is enabled).",
+    ),
+    max_speakers: Optional[int] = typer.Option(
+        None,
+        "--max-speakers",
+        help="Hint for maximum number of speakers (used if diarization is enabled).",
+    ),
+    gemini_model: Optional[str] = typer.Option(
+        None,
+        "--gemini-model",
+        help=f"Gemini model to use for trivia extraction. Defaults to AYQM_GEMINI_MODEL or {DEFAULT_MODEL}.",
+    ),
+    max_output_tokens: int = typer.Option(
+        DEFAULT_MAX_OUTPUT_TOKENS,
+        "--max-output-tokens",
+        help="Maximum output tokens for the extraction response.",
+    ),
+    estimate_only: bool = typer.Option(
+        False,
+        "--estimate-only",
+        help="Transcribe, save the transcript, estimate input-token cost, and stop before extraction.",
+    ),
+    yes: bool = typer.Option(
+        False,
+        "--yes",
+        "-y",
+        help="Skip the interactive approval prompt after showing the input-token cost estimate.",
+    ),
+):
+    """
+    Transcribes an audio file, saves the transcript, then extracts structured trivia using Gemini.
+    """
+    load_repo_env()
+    configure_logging()
+    resolved_token = hf_token or os.environ.get("HF_TOKEN")
+    resolved_model = resolve_gemini_model(gemini_model)
+    audio = Path(audio_path)
+
+    if not transcript_output:
+        transcript_output = str(audio.with_suffix(".json"))
+    if not trivia_output:
+        trivia_output = str(audio.with_suffix(".trivia.json"))
+
+    try:
+        typer.echo(f"Transcribing {audio_path}...")
+        transcript = transcribe_audio(
+            audio_path=audio_path,
+            model_name=whisper_model,
+            device=device,
+            compute_type=compute_type,
+            batch_size=batch_size,
+            diarize=diarize,
+            hf_token=resolved_token,
+            min_speakers=min_speakers,
+            max_speakers=max_speakers,
+        )
+
+        typer.echo(f"Writing transcript to {transcript_output}...")
+        write_transcript(transcript_output, transcript)
+        typer.echo("Transcription completed successfully.")
+
+        client = create_client()
+        estimate, _prompt = prepare_estimate(transcript_output, client=client, model=resolved_model)
+        typer.echo(f"Model: {resolved_model}")
+        typer.echo(f"Exact input tokens: {estimate.input_tokens}")
+        typer.echo(f"Estimated input-token cost: ${estimate.estimated_input_cost_usd:.6f} USD")
+        typer.echo("Output-token cost is not included in this pre-approval estimate.")
+
+        if estimate_only:
+            typer.echo("Estimate-only mode: transcript saved; trivia extraction skipped.")
+            raise typer.Exit(code=0)
+
+        if not yes and not typer.confirm("Run trivia extraction with this input-token cost estimate?"):
+            typer.echo("Extraction cancelled. Transcript remains saved.")
+            raise typer.Exit(code=1)
+
+        result = extract_trivia(
+            transcript_output,
+            client=client,
+            model=resolved_model,
+            max_output_tokens=max_output_tokens,
+            estimated_usage=estimate,
+        )
+
+        typer.echo(f"Writing trivia to {trivia_output}...")
+        write_trivia(trivia_output, result)
+        typer.echo(f"Extracted {len(result.trivia)} trivia items.")
+    except typer.Exit:
+        raise
+    except Exception as e:
+        typer.echo(f"Error during audio processing: {e}", err=True)
         raise typer.Exit(code=1)
 
 
