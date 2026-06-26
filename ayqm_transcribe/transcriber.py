@@ -20,6 +20,27 @@ class WhisperXEncoder(json.JSONEncoder):
         return super().default(obj)
 
 
+def get_diarization_pipeline_class() -> Any:
+    pipeline_class = getattr(whisperx, "DiarizationPipeline", None)
+    if pipeline_class is not None:
+        return pipeline_class
+
+    from whisperx.diarize import DiarizationPipeline
+
+    return DiarizationPipeline
+
+
+def create_diarization_pipeline(hf_token: str, device: str) -> Any:
+    pipeline_class = get_diarization_pipeline_class()
+    try:
+        return pipeline_class(token=hf_token, device=device)
+    except TypeError as error:
+        message = str(error)
+        if "unexpected keyword argument" not in message or "token" not in message:
+            raise
+        return pipeline_class(use_auth_token=hf_token, device=device)
+
+
 def transcribe_audio(
     audio_path: str,
     model_name: str = "base",
@@ -92,7 +113,7 @@ def transcribe_audio(
             )
 
         logger.info("Loading Diarization model...")
-        diarize_model = whisperx.DiarizationPipeline(use_auth_token=hf_token, device=device)
+        diarize_model = create_diarization_pipeline(hf_token=hf_token, device=device)
         
         logger.info("Running speaker diarization...")
         diarize_segments = diarize_model(
