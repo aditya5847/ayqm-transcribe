@@ -180,7 +180,6 @@ requires-dist = [
     { name = "torch", marker = "sys_platform != 'darwin'", specifier = ">=2.2.2", index = "https://download.pytorch.org/whl/cu128" },
     { name = "torch", marker = "sys_platform == 'darwin'", specifier = ">=2.2.2", index = "https://download.pytorch.org/whl/cpu" },
     { name = "typer", specifier = ">=0.23.2" },
-    { name = "whisperx", git = "https://github.com/m-bain/whisperx.git" },
 ]
 
 [package.metadata.requires-dev]
